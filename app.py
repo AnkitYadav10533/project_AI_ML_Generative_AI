@@ -33,77 +33,107 @@ model_error_details = ""
 
 @st.cache_resource(show_spinner=False)
 def load_gender_model():
-    # Monkey-patch Keras InputLayer deserialization to fix compatibility issues between Keras 2 and Keras 3 saved models
-    try:
-        import tensorflow as tf
-        
-        # Define a patched init helper
-        def patch_init(cls):
-            orig_init = cls.__init__
-            def new_init(self, *args, **kwargs):
-                if 'batch_shape' in kwargs:
-                    kwargs['batch_input_shape'] = kwargs.pop('batch_shape')
-                if 'optional' in kwargs:
-                    kwargs.pop('optional')
-                orig_init(self, *args, **kwargs)
-            cls.__init__ = new_init
-
-        # Try patching different potential import paths for InputLayer
-        classes_to_patch = []
-        try:
-            classes_to_patch.append(tf.keras.layers.InputLayer)
-        except Exception:
-            pass
-        try:
-            import keras
-            classes_to_patch.append(keras.layers.InputLayer)
-        except Exception:
-            pass
-        try:
-            from keras.engine.input_layer import InputLayer
-            classes_to_patch.append(InputLayer)
-        except Exception:
-            pass
-        try:
-            from keras.layers import InputLayer
-            classes_to_patch.append(InputLayer)
-        except Exception:
-            pass
-
-        # Apply __init__ patch to all discovered InputLayer classes
-        for cls in set(classes_to_patch):
-            patch_init(cls)
-
-        # Also register a custom layer in Keras custom objects registry
-        class PatchedInputLayer(tf.keras.layers.InputLayer):
-            def __init__(self, *args, **kwargs):
-                if 'batch_shape' in kwargs:
-                    kwargs['batch_input_shape'] = kwargs.pop('batch_shape')
-                if 'optional' in kwargs:
-                    kwargs.pop('optional')
-                super().__init__(*args, **kwargs)
-
-        tf.keras.utils.get_custom_objects()['InputLayer'] = PatchedInputLayer
-        try:
-            import keras
-            keras.utils.get_custom_objects()['InputLayer'] = PatchedInputLayer
-        except Exception:
-            pass
-    except Exception:
-        pass
-
     model_paths = ['gender_classifier.keras', 'binary_image_classifier.h5']
     errors = []
+    
     for path in model_paths:
         if os.path.exists(path):
+            # For the .keras package, attempt to rebuild the architecture and load the weights
+            # directly from model.weights.h5. This bypasses Keras 3 deserialization compatibility 
+            # errors (like batch_shape, input_axes, optional, etc.) on Keras 2 / TF 2.15.
+            if path.endswith('.keras'):
+                try:
+                    import zipfile
+                    import tempfile
+                    import h5py
+                    import numpy as np
+                    import tensorflow as tf
+
+                    # Reconstruct standard Sequential CNN model
+                    model = tf.keras.models.Sequential([
+                        tf.keras.layers.Conv2D(32, (3, 3), activation='relu', input_shape=(150, 150, 3)),
+                        tf.keras.layers.MaxPooling2D((2, 2)),
+                        tf.keras.layers.Conv2D(64, (3, 3), activation='relu'),
+                        tf.keras.layers.MaxPooling2D((2, 2)),
+                        tf.keras.layers.Conv2D(128, (3, 3), activation='relu'),
+                        tf.keras.layers.MaxPooling2D((2, 2)),
+                        tf.keras.layers.Flatten(),
+                        tf.keras.layers.Dense(128, activation='relu'),
+                        tf.keras.layers.Dense(1, activation='sigmoid')
+                    ])
+
+                    # Extract weights from the .keras zip archive
+                    temp_dir = tempfile.gettempdir()
+                    weights_filename = 'model.weights.h5'
+                    weights_path = os.path.join(temp_dir, weights_filename)
+                    
+                    if os.path.exists(weights_path):
+                        try:
+                            os.remove(weights_path)
+                        except Exception:
+                            pass
+
+                    with zipfile.ZipFile(path, 'r') as zip_ref:
+                        zip_ref.extract(weights_filename, temp_dir)
+
+                    try:
+                        # Map and load weights manually
+                        with h5py.File(weights_path, 'r') as f:
+                            mapping = {
+                                0: 'conv2d',
+                                2: 'conv2d_1',
+                                4: 'conv2d_2',
+                                7: 'dense',
+                                8: 'dense_1'
+                            }
+                            for layer_idx, h5_name in mapping.items():
+                                layer = model.layers[layer_idx]
+                                kernel = np.array(f[f'layers/{h5_name}/vars/0'])
+                                bias = np.array(f[f'layers/{h5_name}/vars/1'])
+                                layer.set_weights([kernel, bias])
+                        
+                        # Return successfully loaded model
+                        return model
+                    finally:
+                        if os.path.exists(weights_path):
+                            try:
+                                os.remove(weights_path)
+                            except Exception:
+                                pass
+                except Exception as ex:
+                    errors.append(f"Direct weight load failed for {path}: {str(ex)}")
+
+            # Fallback/default path: native keras load_model (with monkeypatches)
             try:
-                # Load without compiling to avoid missing optimizer/custom layer compilation errors
+                import tensorflow as tf
+                # Apply monkeypatch for InputLayer (just in case)
+                def patch_init(cls):
+                    orig_init = cls.__init__
+                    def new_init(self, *args, **kwargs):
+                        if 'batch_shape' in kwargs:
+                            kwargs['batch_input_shape'] = kwargs.pop('batch_shape')
+                        if 'optional' in kwargs:
+                            kwargs.pop('optional')
+                        orig_init(self, *args, **kwargs)
+                    cls.__init__ = new_init
+
+                classes_to_patch = []
+                try: classes_to_patch.append(tf.keras.layers.InputLayer)
+                except Exception: pass
+                try:
+                    import keras
+                    classes_to_patch.append(keras.layers.InputLayer)
+                except Exception: pass
+                
+                for cls in set(classes_to_patch):
+                    patch_init(cls)
+                
                 return tf.keras.models.load_model(path, compile=False)
             except Exception as e:
-                errors.append(f"Error loading {path}: {str(e)}")
+                errors.append(f"Fallback load_model failed for {path}: {str(e)}")
         else:
             errors.append(f"'{path}' not found on disk")
-    
+            
     # Raise exception to prevent st.cache_resource from caching None/failure
     err_msg = " | ".join(errors)
     raise FileNotFoundError(f"Model initialization failed: {err_msg}")
