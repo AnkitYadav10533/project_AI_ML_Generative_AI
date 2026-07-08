@@ -36,14 +36,59 @@ def load_gender_model():
     # Monkey-patch Keras InputLayer deserialization to fix compatibility issues between Keras 2 and Keras 3 saved models
     try:
         import tensorflow as tf
-        original_input_layer_init = tf.keras.layers.InputLayer.__init__
-        def patched_input_layer_init(self, *args, **kwargs):
-            if 'batch_shape' in kwargs:
-                kwargs['batch_input_shape'] = kwargs.pop('batch_shape')
-            if 'optional' in kwargs:
-                kwargs.pop('optional')
-            original_input_layer_init(self, *args, **kwargs)
-        tf.keras.layers.InputLayer.__init__ = patched_input_layer_init
+        
+        # Define a patched init helper
+        def patch_init(cls):
+            orig_init = cls.__init__
+            def new_init(self, *args, **kwargs):
+                if 'batch_shape' in kwargs:
+                    kwargs['batch_input_shape'] = kwargs.pop('batch_shape')
+                if 'optional' in kwargs:
+                    kwargs.pop('optional')
+                orig_init(self, *args, **kwargs)
+            cls.__init__ = new_init
+
+        # Try patching different potential import paths for InputLayer
+        classes_to_patch = []
+        try:
+            classes_to_patch.append(tf.keras.layers.InputLayer)
+        except Exception:
+            pass
+        try:
+            import keras
+            classes_to_patch.append(keras.layers.InputLayer)
+        except Exception:
+            pass
+        try:
+            from keras.engine.input_layer import InputLayer
+            classes_to_patch.append(InputLayer)
+        except Exception:
+            pass
+        try:
+            from keras.layers import InputLayer
+            classes_to_patch.append(InputLayer)
+        except Exception:
+            pass
+
+        # Apply __init__ patch to all discovered InputLayer classes
+        for cls in set(classes_to_patch):
+            patch_init(cls)
+
+        # Also register a custom layer in Keras custom objects registry
+        class PatchedInputLayer(tf.keras.layers.InputLayer):
+            def __init__(self, *args, **kwargs):
+                if 'batch_shape' in kwargs:
+                    kwargs['batch_input_shape'] = kwargs.pop('batch_shape')
+                if 'optional' in kwargs:
+                    kwargs.pop('optional')
+                super().__init__(*args, **kwargs)
+
+        tf.keras.utils.get_custom_objects()['InputLayer'] = PatchedInputLayer
+        try:
+            import keras
+            keras.utils.get_custom_objects()['InputLayer'] = PatchedInputLayer
+        except Exception:
+            pass
     except Exception:
         pass
 
