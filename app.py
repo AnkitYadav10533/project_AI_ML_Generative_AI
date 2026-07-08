@@ -33,6 +33,20 @@ model_error_details = ""
 
 @st.cache_resource(show_spinner=False)
 def load_gender_model():
+    # Monkey-patch Keras InputLayer deserialization to fix compatibility issues between Keras 2 and Keras 3 saved models
+    try:
+        import tensorflow as tf
+        original_input_layer_init = tf.keras.layers.InputLayer.__init__
+        def patched_input_layer_init(self, *args, **kwargs):
+            if 'batch_shape' in kwargs:
+                kwargs['batch_input_shape'] = kwargs.pop('batch_shape')
+            if 'optional' in kwargs:
+                kwargs.pop('optional')
+            original_input_layer_init(self, *args, **kwargs)
+        tf.keras.layers.InputLayer.__init__ = patched_input_layer_init
+    except Exception:
+        pass
+
     model_paths = ['gender_classifier.keras', 'binary_image_classifier.h5']
     errors = []
     for path in model_paths:
