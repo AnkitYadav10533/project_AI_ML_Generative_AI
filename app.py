@@ -450,7 +450,7 @@ with col_up_l:
             # Display Premium Preview Card
             st.markdown("<br>", unsafe_allow_html=True)
             st.markdown("<div class='scan-container'>", unsafe_allow_html=True)
-            st.image(img, use_container_width=True)
+            st.image(img, width="stretch")
             
             # Injected sweep overlay while scanning is active
             if st.session_state.scan_phase == "scanning":
@@ -509,7 +509,7 @@ with col_up_r:
     if uploaded_file is not None and is_valid_image and img is not None:
         if st.session_state.scan_phase == "idle":
             st.write("Target image is mounted. Ready to load tensor nodes and trigger backprop pathways.")
-            if st.button("RUN CLASSIFICATION CORE", use_container_width=True):
+            if st.button("RUN CLASSIFICATION CORE", width="stretch"):
                 st.session_state.scan_phase = "scanning"
                 st.rerun()
                 
@@ -658,10 +658,10 @@ with col_up_r:
                 height=220,
                 margin=dict(l=20, r=20, t=40, b=20)
             )
-            st.plotly_chart(fig_gauge, use_container_width=True)
+            st.plotly_chart(fig_gauge, width="stretch")
             
             # Clear scan button
-            if st.button("CLEAR METRICS / MOUNT NEW TARGET", use_container_width=True):
+            if st.button("CLEAR METRICS / MOUNT NEW TARGET", width="stretch"):
                 st.session_state.scan_phase = "idle"
                 st.session_state.predicted_data = None
                 st.rerun()
@@ -681,7 +681,7 @@ if len(st.session_state.history) > 0:
     
     col_hist_c, col_hist_r = st.columns([5, 1])
     with col_hist_r:
-        if st.button("CLEAR ARCHIVE", use_container_width=True):
+        if st.button("CLEAR ARCHIVE", width="stretch"):
             st.session_state.history = []
             st.rerun()
 else:
